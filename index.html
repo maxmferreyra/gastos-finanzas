@@ -20,10 +20,34 @@
   --shadow:0 1px 3px rgba(0,0,0,0.07),0 1px 2px rgba(0,0,0,0.04);
   --shadow-md:0 4px 16px rgba(0,0,0,0.1);
 }
+
+/* DARK MODE */
+body.dark{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;
+  --border:rgba(255,255,255,0.07);--border-md:rgba(255,255,255,0.13);
+  --text:#e8eaf0;--text2:#b0b8cc;--text3:#6b7280;
+  --accent-light:#1a2d4a;--shadow:0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md:0 4px 16px rgba(0,0,0,0.5);}
+body.dark .hdr{background:rgba(15,17,23,0.93);}
+body.dark .acc-hdr:hover{background:#1e2235;}
+body.dark table.tbl tr:hover td{background:#1e2235;}
+body.dark .code-block{background:#0d1117;}
+body.dark input[type=text],body.dark input[type=number],body.dark select,body.dark input[type=password]{background:var(--surface2);color:var(--text);border-color:var(--border-md);}
+body.dark .btn{background:var(--surface);color:var(--text);border-color:var(--border-md);}
+body.dark .btn:hover{background:var(--surface2);}
+body.dark .btn-primary{background:var(--accent);color:#fff;}
+body.dark .btn-danger-solid{background:var(--red);color:#fff;}
+body.dark .btn-add{background:var(--accent-light);color:#a8c8ff;}
+body.dark .ytab{background:var(--surface);color:var(--text2);}
+body.dark .mpill{background:var(--surface);color:var(--text2);}
+
+/* DARK TOGGLE */
+.dark-toggle{background:none;border:1.5px solid var(--border-md);border-radius:20px;padding:5px 10px;cursor:pointer;font-size:16px;color:var(--text2);display:flex;align-items:center;gap:4px;transition:all .15s;}
+.dark-toggle:hover{border-color:var(--accent-2);background:var(--accent-light);}
+
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   background:var(--bg);color:var(--text);font-size:15px;line-height:1.5;min-height:100vh;
   display:flex;justify-content:center;}
-.shell{width:100%;max-width:820px;padding:0 16px 100px}
+.shell{width:100%;max-width:980px;padding:0 20px 100px}
 
 /* LOCK */
 #lockScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;width:100%}
@@ -52,7 +76,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 
 /* HEADER */
 .hdr{position:sticky;top:0;z-index:200;background:rgba(244,246,249,0.93);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--border);padding:11px 20px;margin:0 -16px 16px}
-.hdr-inner{max-width:820px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.hdr-inner{max-width:980px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .logo{display:flex;align-items:center;gap:8px;font-size:17px;font-weight:700;color:var(--accent)}
 
 /* YEAR TABS */
@@ -265,7 +289,8 @@ create unique index on gastos_meses(user_key);</div>
         <div class="logo">💳 <span>Mis Gastos</span></div>
         <div style="display:flex;align-items:center;gap:8px">
           <div id="syncBar"><span class="sync-dot" id="syncDot"></span><span id="syncTxt">–</span></div>
-          <button class="btn btn-ghost btn-sm" onclick="openAddMonth()">📅 Nuevo mes</button>
+          <button class="dark-toggle" id="darkToggle" onclick="toggleDark()" title="Cambiar tema">☀️</button>
+          
         </div>
       </div>
     </div>
@@ -720,7 +745,7 @@ function mkTCTable(items,section){
       </td>
     </tr>`).join('')}</tbody>
     <tfoot><tr>
-      <td colspan="2">Total</td>
+      <td colspan="2">Total ${isPaid?'<span class="last-quota" style="background:#d6f5eb;color:#1c7a5a">¡Pago!</span>':''}</td>
       <td style="text-align:right">${fmt(tot)}</td>
       <td></td>
       <td style="text-align:center"><input type="checkbox" class="cbx" title="Tarjeta pagada" ${isPaid?'checked':''} onchange="toggleTCPaid('${section}',this.checked)"></td>
@@ -876,6 +901,8 @@ function renderIngresos(){
     </div>`;
   setTimeout(()=>{
     const c=document.getElementById('chtBar');if(!c)return;
+    // destroy existing instance if any
+    const existing=Chart.getChart(c);if(existing)existing.destroy();
     new Chart(c,{type:'bar',data:{
       labels:months.map(m=>m.mes.split(' ')[0].substring(0,3)),
       datasets:[
@@ -1072,7 +1099,12 @@ function saveNewMonth(){
   months.push({mes,sueldo:sue,ingreso:ing,gonzaTC:gonz,casa:[],personal:[],naranja:[],galAdi:[],galTit:[],extras:[]});
   save();curIdx=months.length-1;
   closeOverlay('ovAddMonth');
+  // Switch to the year of the new month so it becomes visible
+  const newYear=mes.split(' ')[1]||activeYear;
+  activeYear=newYear;
   initYears();renderMonthsBar();checkAlert();renderActive();
+  // Scroll months bar to end
+  setTimeout(()=>{const b=document.getElementById('monthsBar');if(b)b.scrollLeft=b.scrollWidth;},100);
   toast('✓ Mes '+mes+' creado');
 }
 
@@ -1180,8 +1212,23 @@ function askDelete(section,idx,name){
 }
 
 // ════════════════════════════
+// DARK MODE
+// ════════════════════════════
+function toggleDark(){
+  const isDark=document.body.classList.toggle('dark');
+  localStorage.setItem('darkMode', isDark?'1':'0');
+  document.getElementById('darkToggle').textContent=isDark?'🌙':'☀️';
+}
+function initDarkMode(){
+  const saved=localStorage.getItem('darkMode');
+  if(saved==='1'){document.body.classList.add('dark');document.getElementById('darkToggle').textContent='🌙';}
+  else{document.getElementById('darkToggle').textContent='☀️';}
+}
+
+// ════════════════════════════
 // START
 // ════════════════════════════
+initDarkMode();
 boot();
 </script>
 </body>
