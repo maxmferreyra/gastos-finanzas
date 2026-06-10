@@ -152,7 +152,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 .acc-sub{font-size:12px;color:var(--text3);margin-top:2px}
 .chev{color:var(--text3);transition:transform .2s;flex-shrink:0;font-size:18px;line-height:1}
 .chev.open{transform:rotate(180deg)}
-.acc-body{border-top:1px solid var(--border);display:none}
+.acc-body{border-top:1px solid var(--border);overflow:hidden;max-height:0;transition:max-height 0.35s ease}
+.acc-body.open{max-height:4000px}
 
 /* TABLE */
 .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
@@ -171,7 +172,7 @@ table.tbl tfoot td{font-weight:700;background:var(--surface2);border-top:1.5px s
 .icon-btn.del:hover{color:var(--red)}
 
 /* CHECKBOX */
-.cbx{width:16px;height:16px;cursor:pointer;accent-color:var(--accent)}
+.cbx{width:16px;height:16px;cursor:pointer;accent-color:#1c7a5a}
 
 /* LAST QUOTA BADGE */
 .last-quota{background:#d6f5eb;color:#1c7a5a;font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;white-space:nowrap}
@@ -740,19 +741,35 @@ function lastQuotaBadge(q){
 // Simple table: casa / personal with Pago checkbox
 function mkSimpleTable(items,section){
   const tot=sumArr(items);
-  return `<div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Concepto</th><th style="text-align:right">Monto</th><th style="text-align:center">Pago</th><th></th></tr></thead>
-    <tbody>${items.map((it,i)=>`<tr>
+  const isCasa=section==='casa';
+  const headers=isCasa
+    ?`<thead><tr><th>Concepto</th><th style="text-align:right">Monto total</th><th style="text-align:right">Monto dividido</th><th style="text-align:center">Pago</th><th></th></tr></thead>`
+    :`<thead><tr><th>Concepto</th><th style="text-align:right">Monto</th><th style="text-align:center">Pago</th><th></th></tr></thead>`;
+  const rows=items.map((it,i)=>{
+    if(isCasa) return `<tr>
       <td>${it.c}</td>
-      <td style="text-align:right">${fmt(section==='casa'?it.v/2:it.v)}</td>
+      <td style="text-align:right">${fmt(it.v)}</td>
+      <td style="text-align:right;color:var(--accent);font-weight:600">${fmt(it.v/2)}</td>
       <td style="text-align:center"><input type="checkbox" class="cbx" ${it.paid?'checked':''} onchange="togglePaid('${section}',${i},this.checked)"></td>
       <td style="white-space:nowrap">
         <button class="icon-btn edit" title="Editar" onclick="openEditExp('${section}',${i})">✏️</button>
         <button class="icon-btn del" title="Eliminar" onclick="askDelete('${section}',${i},'${it.c}')">🗑️</button>
       </td>
-    </tr>`).join('')}</tbody>
-    <tfoot><tr><td>Total</td><td style="text-align:right">${fmt(section==='casa'?tot/2:tot)}</td><td></td><td></td></tr></tfoot>
-  </table></div>`;
+    </tr>`;
+    return `<tr>
+      <td>${it.c}</td>
+      <td style="text-align:right">${fmt(it.v)}</td>
+      <td style="text-align:center"><input type="checkbox" class="cbx" ${it.paid?'checked':''} onchange="togglePaid('${section}',${i},this.checked)"></td>
+      <td style="white-space:nowrap">
+        <button class="icon-btn edit" title="Editar" onclick="openEditExp('${section}',${i})">✏️</button>
+        <button class="icon-btn del" title="Eliminar" onclick="askDelete('${section}',${i},'${it.c}')">🗑️</button>
+      </td>
+    </tr>`;
+  }).join('');
+  const footer=isCasa
+    ?`<tfoot><tr><td>Total</td><td style="text-align:right">${fmt(tot)}</td><td style="text-align:right;color:var(--accent);font-weight:600">${fmt(tot/2)}</td><td></td><td></td></tr></tfoot>`
+    :`<tfoot><tr><td>Total</td><td style="text-align:right">${fmt(tot)}</td><td></td><td></td></tr></tfoot>`;
+  return `<div class="tbl-wrap"><table class="tbl">${headers}<tbody>${rows}</tbody>${footer}</table></div>`;
 }
 
 // TC table: tarjeta with Pago checkbox only on total row
@@ -761,10 +778,10 @@ function mkTCTable(items,section){
   const secKey=section+'_paid';
   const isPaid=months[curIdx][secKey]||false;
   return `<div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Concepto</th><th>Cuota</th><th style="text-align:right">Monto</th><th>Compartido</th><th></th></tr></thead>
+    <thead><tr><th>Concepto</th><th>Tipo / Cuota</th><th style="text-align:right">Monto</th><th>Compartido</th><th></th></tr></thead>
     <tbody>${items.map((it,i)=>`<tr>
-      <td>${it.c}${lastQuotaBadge(it.q)}</td>
-      <td style="color:var(--text3)">${it.q||'-'}</td>
+      <td>${it.c}${it.tipo!=='fijo'?lastQuotaBadge(it.q):''}</td>
+      <td style="color:var(--text3)">${it.tipo==='fijo'?'<span class="badge b-shared">Fijo</span>':it.q||'-'}</td>
       <td style="text-align:right">${fmt(it.v)}</td>
       <td>${it.comp?`<span class="badge ${badgeCls(it.comp)}">${it.comp}</span>`:''}</td>
       <td style="white-space:nowrap">
@@ -773,7 +790,7 @@ function mkTCTable(items,section){
       </td>
     </tr>`).join('')}</tbody>
     <tfoot><tr>
-      <td colspan="2">Total ${isPaid?'<span class="last-quota" style="background:#d6f5eb;color:#1c7a5a">¡Pago!</span>':''}</td>
+      <td colspan="2" style="display:flex;align-items:center;gap:8px;border-bottom:none">Total ${isPaid?'<span style="background:#d6f5eb;color:#1c7a5a;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap">✓ ¡Pago!</span>':''}</td>
       <td style="text-align:right">${fmt(tot)}</td>
       <td></td>
       <td style="text-align:center"><input type="checkbox" class="cbx" title="Tarjeta pagada" ${isPaid?'checked':''} onchange="toggleTCPaid('${section}',this.checked)"></td>
@@ -803,10 +820,10 @@ function accordion(id,emoji,title,sub,body,section,addLabel){
   </div>`;
 }
 function toggleAcc(id){
-  const b=document.getElementById('acc-'+id),c=document.getElementById('chv-'+id);
-  const open=b.style.display==='block';
-  b.style.display=open?'none':'block';
-  c.classList.toggle('open',!open);
+  const b=document.getElementById('acc-'+id),ch=document.getElementById('chv-'+id);
+  const isOpen=b.classList.contains('open');
+  b.classList.toggle('open',!isOpen);
+  ch.classList.toggle('open',!isOpen);
 }
 
 // ════════════════════════════
@@ -1159,9 +1176,18 @@ function openAddExp(section){
   openExpModal('add',`${meta.emoji} Ingresar gasto — ${meta.label}`,`
     <div class="text-sm" style="margin-bottom:4px">${meta.hint}</div>
     <div class="fg"><label class="flabel">Concepto</label><input type="text" id="exp-c" placeholder="Ej: ${isTC?'Apple TV':'Alquiler'}"></div>
-    ${isTC?`<div class="frow">
+    ${isTC?`<div class="fg"><label class="flabel">Tipo de gasto</label>
+      <select id="exp-tipo" onchange="onTipoGastoChange()">
+        <option value="cuota">Cuota</option>
+        <option value="fijo">Gasto fijo (se repite todos los meses)</option>
+      </select>
+    </div>
+    <div id="exp-cuota-row" class="frow">
       <div class="fg"><label class="flabel">Cuota (ej: 2/6)</label><input type="text" id="exp-q" placeholder="1/1"></div>
       <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp" placeholder="Gonza, Gladys…"></div>
+    </div>
+    <div id="exp-fijo-row" style="display:none">
+      <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp-fijo" placeholder="Gonza, Gladys…"></div>
     </div>`:''}
     <div class="fg"><label class="flabel">Monto ($)</label><input type="number" id="exp-v" placeholder="0"></div>
     ${isTC?`<div class="notice" style="margin-top:0;font-size:12px">ℹ️ La app propagará cuotas siguientes a meses existentes.</div>`:''}
@@ -1178,9 +1204,18 @@ function openEditExp(section,idx){
   const it=months[curIdx][section][idx];
   openExpModal('edit',`✏️ Editar — ${meta.label}`,`
     <div class="fg"><label class="flabel">Concepto</label><input type="text" id="exp-c" value="${it.c}"></div>
-    ${isTC?`<div class="frow">
+    ${isTC?`<div class="fg"><label class="flabel">Tipo de gasto</label>
+      <select id="exp-tipo" onchange="onTipoGastoChange()">
+        <option value="cuota" ${(it.tipo||'cuota')==='cuota'?'selected':''}>Cuota</option>
+        <option value="fijo" ${it.tipo==='fijo'?'selected':''}>Gasto fijo</option>
+      </select>
+    </div>
+    <div id="exp-cuota-row" class="frow" style="${it.tipo==='fijo'?'display:none':''}">
       <div class="fg"><label class="flabel">Cuota</label><input type="text" id="exp-q" value="${it.q||'1/1'}"></div>
       <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp" value="${it.comp||''}"></div>
+    </div>
+    <div id="exp-fijo-row" style="${it.tipo==='fijo'?'':'display:none'}">
+      <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp-fijo" value="${it.tipo==='fijo'?(it.comp||''):''}"></div>
     </div>`:''}
     <div class="fg"><label class="flabel">Monto ($)</label><input type="number" id="exp-v" value="${it.v}"></div>
     <div id="exp-err" class="err-msg" style="display:none"></div>
@@ -1211,13 +1246,23 @@ function saveExp(){
   err.style.display='none';
   const isTC=SECTION_META[expSection].type==='tc';
   const item={c,v};
-  if(isTC){item.q=document.getElementById('exp-q').value.trim()||'1/1';item.comp=document.getElementById('exp-comp').value.trim();}
+  if(isTC){
+    const tipo=document.getElementById('exp-tipo')?.value||'cuota';
+    item.tipo=tipo;
+    if(tipo==='fijo'){
+      item.q='';
+      item.comp=(document.getElementById('exp-comp-fijo')?.value||'').trim();
+    } else {
+      item.q=document.getElementById('exp-q').value.trim()||'1/1';
+      item.comp=(document.getElementById('exp-comp')?.value||'').trim();
+    }
+  }
   if(editIdx!==null){
     months[curIdx][expSection][editIdx]=item;
     closeOverlay('ovAddExp');
   } else {
     months[curIdx][expSection].push(item);
-    if(isTC){
+    if(isTC&&item.tipo!=='fijo'){
       const propagated=propagateQuotas(item,expSection,curIdx);
       if(propagated>0)toast(`✓ ${item.q} — ${propagated} cuota(s) propagadas`);
     }
@@ -1237,6 +1282,22 @@ function askDelete(section,idx,name){
     if(document.getElementById('exp-list'))renderExpList();
     renderActive();checkAlert();
   });
+}
+
+// ════════════════════════════
+// TIPO GASTO TOGGLE
+// ════════════════════════════
+function onTipoGastoChange(){
+  const tipo=document.getElementById('exp-tipo')?.value;
+  const cuotaRow=document.getElementById('exp-cuota-row');
+  const fijoRow=document.getElementById('exp-fijo-row');
+  if(tipo==='fijo'){
+    if(cuotaRow)cuotaRow.style.display='none';
+    if(fijoRow)fijoRow.style.display='';
+  } else {
+    if(cuotaRow)cuotaRow.style.display='';
+    if(fijoRow)fijoRow.style.display='none';
+  }
 }
 
 // ════════════════════════════
