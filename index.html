@@ -168,9 +168,10 @@ table.tbl tfoot td{font-weight:700;background:var(--surface2);border-top:1.5px s
 /* ACTION ICONS */
 .icon-btn{background:none;border:none;cursor:pointer;padding:4px 5px;border-radius:4px;font-size:14px;line-height:1;transition:background .12s}
 .sel-cbx{width:15px;height:15px;cursor:pointer;accent-color:var(--red);flex-shrink:0}
-.del-multi-bar{display:none;align-items:center;gap:10px;padding:8px 14px;background:var(--red-light);border-top:1px solid #fca5a5;font-size:13px;color:var(--red)}
+.del-multi-bar{display:none;align-items:center;gap:8px;padding:8px 14px;background:var(--surface2);border-top:1px solid var(--border);font-size:12px;color:var(--text2)}
 .del-multi-bar.show{display:flex}
-tr.row-selected td{background:rgba(192,57,43,0.07)!important}
+tr.row-selected td{background:rgba(192,57,43,0.06)!important}
+.del-multi-bar .btn-danger-solid{padding:5px 10px;font-size:12px}
 .icon-btn:hover{background:var(--surface2)}
 .icon-btn.edit:hover{color:var(--accent)}
 .icon-btn.del:hover{color:var(--red)}
@@ -649,38 +650,31 @@ function isLastQuota(q){
   const p=parseQuota(q);
   return p&&p.cur===p.total;
 }
-// ─── PROPAGATION HELPERS ───────────────────────────────────────────────────
-// Called right after pushing a NEW item into months[fromIdx][section].
-// Fills months[fromIdx+1], [fromIdx+2], … with the consecutive quota numbers.
-// For FIJO items, copies the item as-is to every following month.
+// ─── QUOTA PROPAGATION ──────────────────────────────────────────────────────
+// Simple: when a new item is saved, push consecutive quotas to following months.
+// item.totalCuotas = total number of installments (e.g. 6)
+// item.q = "1/6" (current/total)
+// Called once, right after pushing item to months[fromIdx][section].
 function propagateAfterSave(item, section, fromIdx){
   if(item.tipo === 'fijo'){
-    // Copy fixed expense to all subsequent months
+    // Copy fixed expense to all subsequent existing months
     for(let ti = fromIdx + 1; ti < months.length; ti++){
-      const exists = months[ti][section].some(i => i.c === item.c && i.tipo === 'fijo');
-      if(!exists){
-        months[ti][section].push({c:item.c, q:'', v:item.v, comp:item.comp||'', tipo:'fijo'});
-      }
+      const already = months[ti][section].some(i => i.c === item.c && i.tipo === 'fijo');
+      if(!already) months[ti][section].push({c:item.c, q:'', v:item.v, comp:item.comp||'', tipo:'fijo'});
     }
     return;
   }
-  // CUOTA: propagate cur+1, cur+2 … total into consecutive months
-  const qp = parseQuota(item.q);
-  if(!qp || qp.cur >= qp.total) return;
-  for(let offset = 1; offset <= (qp.total - qp.cur); offset++){
-    const ti = fromIdx + offset;
+  // CUOTA: item.q = "1/N" — push 2/N, 3/N … N/N to next consecutive months
+  const total = item.totalCuotas || 1;
+  if(total <= 1) return;
+  for(let n = 2; n <= total; n++){
+    const ti = fromIdx + (n - 1); // month index for quota n
     if(ti >= months.length) break;
-    const nextNum = qp.cur + offset;
-    months[ti][section].push({
-      c:item.c, q:`${nextNum}/${qp.total}`,
-      v:item.v, comp:item.comp||'', tipo:'cuota'
-    });
+    months[ti][section].push({c:item.c, q:`${n}/${total}`, v:item.v, comp:item.comp||'', tipo:'cuota', totalCuotas:total});
   }
 }
 
-// When a new month is created, carry forward from ONLY the immediately prior month:
-// - cuota items that still have remaining quotas  → next consecutive quota
-// - fijo items                                    → same item copied
+// When a new month is created: carry forward from immediately prior month only
 function fillQuotasForNewMonth(newIdx){
   if(newIdx < 1) return;
   const prev = newIdx - 1;
@@ -689,9 +683,7 @@ function fillQuotasForNewMonth(newIdx){
     (months[prev][sec] || []).forEach(item => {
       if(item.tipo === 'fijo'){
         const exists = months[newIdx][sec].some(i => i.c === item.c && i.tipo === 'fijo');
-        if(!exists){
-          months[newIdx][sec].push({c:item.c, q:'', v:item.v, comp:item.comp||'', tipo:'fijo'});
-        }
+        if(!exists) months[newIdx][sec].push({c:item.c, q:'', v:item.v, comp:item.comp||'', tipo:'fijo'});
         return;
       }
       const qp = parseQuota(item.q);
@@ -701,16 +693,10 @@ function fillQuotasForNewMonth(newIdx){
         const tp = parseQuota(i.q);
         return i.c === item.c && tp && tp.total === qp.total && tp.cur === nextNum;
       });
-      if(!exists){
-        months[newIdx][sec].push({
-          c:item.c, q:`${nextNum}/${qp.total}`,
-          v:item.v, comp:item.comp||'', tipo:'cuota'
-        });
-      }
+      if(!exists) months[newIdx][sec].push({c:item.c, q:`${nextNum}/${qp.total}`, v:item.v, comp:item.comp||'', tipo:'cuota', totalCuotas:qp.total});
     });
   });
 }
-
 
 
 // ════════════════════════════
@@ -801,18 +787,17 @@ function lastQuotaBadge(q){
 function mkSimpleTable(items,section){
   const tot=sumArr(items);
   const isCasa=section==='casa';
-  if(!selectedItems[section]) selectedItems[section]=new Set();
+  if(!selectedItems[selKey(section)]) selectedItems[selKey(section)]=new Set();
   const headers=isCasa
     ?`<thead><tr><th style="width:24px"></th><th>Concepto</th><th style="text-align:right">Monto total</th><th style="text-align:right">Monto dividido</th><th style="text-align:center">Pago</th><th></th></tr></thead>`
     :`<thead><tr><th style="width:24px"></th><th>Concepto</th><th style="text-align:right">Monto</th><th style="text-align:center">Pago</th><th></th></tr></thead>`;
   const rows=items.map((it,i)=>{
-    const isSelected=selectedItems[section]&&selectedItems[section].has(i);
+    const isSelected=selectedItems[selKey(section)]&&selectedItems[selKey(section)].has(i);
     const selCbx=`<input type="checkbox" class="sel-cbx" ${isSelected?'checked':''} onchange="toggleSelectItem('${section}',${i},this.checked)">`;
     const actions=`<td style="white-space:nowrap">
         <button class="icon-btn up" title="Subir" onclick="moveItem('${section}',${i},-1)">↑</button>
         <button class="icon-btn dn" title="Bajar" onclick="moveItem('${section}',${i},1)">↓</button>
         <button class="icon-btn edit" title="Editar" onclick="openEditExp('${section}',${i})">✏️</button>
-        <button class="icon-btn del" title="Eliminar" onclick="askDelete('${section}',${i},'${it.c}')">🗑️</button>
       </td>`;
     if(isCasa) return `<tr class="${isSelected?'row-selected':''}">
       <td>${selCbx}</td>
@@ -833,8 +818,8 @@ function mkSimpleTable(items,section){
   const footer=isCasa
     ?`<tfoot><tr><td></td><td>Total</td><td style="text-align:right">${fmt(tot)}</td><td style="text-align:right;color:var(--accent);font-weight:600">${fmt(tot/2)}</td><td></td><td></td></tr></tfoot>`
     :`<tfoot><tr><td></td><td>Total</td><td style="text-align:right">${fmt(tot)}</td><td></td><td></td></tr></tfoot>`;
-  const delBar=`<div class="del-multi-bar ${selectedItems[section]&&selectedItems[section].size>0?'show':''}" id="del-bar-${section}">
-    🗑️ <span class="del-count">${selectedItems[section]&&selectedItems[section].size>0?selectedItems[section].size+' concepto(s)':''}</span> seleccionados
+  const delBar=`<div class="del-multi-bar ${selectedItems[selKey(section)]&&selectedItems[selKey(section)].size>0?'show':''}" id="del-bar-${section}">
+    🗑️ <span class="del-count">${selectedItems[selKey(section)]&&selectedItems[selKey(section)].size>0?selectedItems[section].size+' concepto(s)':''}</span> seleccionados
     <button class="btn btn-danger-solid btn-sm" onclick="deleteSelected('${section}')">Eliminar seleccionados</button>
     <button class="btn btn-sm" onclick="clearSelection('${section}')">Cancelar</button>
   </div>`;
@@ -842,7 +827,7 @@ function mkSimpleTable(items,section){
 }
 
 function clearSelection(section){
-  delete selectedItems[section];
+  delete selectedItems[selKey(section)];
   renderActive();
   const accMap={casa:'r-casa',personal:'r-pers',naranja:'tc-nar',galAdi:'tc-gadi',galTit:'tc-gtit'};
   const accId=accMap[section];
@@ -860,9 +845,9 @@ function mkTCTable(items,section){
   const secKey=section+'_paid';
   const isPaid=months[curIdx][secKey]||false;
   const paidBadge=isPaid?'<span class="pago-badge">✓ ¡Pago!</span>':'';
-  if(!selectedItems[section]) selectedItems[section]=new Set();
+  if(!selectedItems[selKey(section)]) selectedItems[selKey(section)]=new Set();
   const rows=items.map((it,i)=>{
-    const isSelected=selectedItems[section]&&selectedItems[section].has(i);
+    const isSelected=selectedItems[selKey(section)]&&selectedItems[selKey(section)].has(i);
     const lastQ=it.tipo!=='fijo'?lastQuotaBadge(it.q):'';
     const typeCell=it.tipo==='fijo'?'<span class="badge b-shared">Fijo</span>':(it.q||'-');
     const comp=it.comp?`<span class="badge ${badgeCls(it.comp)}">${it.comp}</span>`:'';
@@ -877,7 +862,6 @@ function mkTCTable(items,section){
         <button class="icon-btn up" title="Subir" onclick="moveItem('${section}',${i},-1)">↑</button>
         <button class="icon-btn dn" title="Bajar" onclick="moveItem('${section}',${i},1)">↓</button>
         <button class="icon-btn edit" title="Editar" onclick="openEditExp('${section}',${i})">✏️</button>
-        <button class="icon-btn del" title="Eliminar" onclick="askDelete('${section}',${i},'${it.c}')">🗑️</button>
       </td>
     </tr>`;
   }).join('');
@@ -889,8 +873,8 @@ function mkTCTable(items,section){
     <td></td>
     <td style="text-align:center"><input type="checkbox" class="cbx" title="Tarjeta pagada" ${checkedAttr} onchange="toggleTCPaid('${section}',this.checked)"></td>
   </tr></tfoot>`;
-  const delBar=`<div class="del-multi-bar ${selectedItems[section]&&selectedItems[section].size>0?'show':''}" id="del-bar-${section}">
-    🗑️ <span class="del-count">${selectedItems[section]&&selectedItems[section].size>0?selectedItems[section].size+' concepto(s)':''}</span> seleccionados
+  const delBar=`<div class="del-multi-bar ${selectedItems[selKey(section)]&&selectedItems[selKey(section)].size>0?'show':''}" id="del-bar-${section}">
+    🗑️ <span class="del-count">${selectedItems[selKey(section)]&&selectedItems[selKey(section)].size>0?selectedItems[section].size+' concepto(s)':''}</span> seleccionados
     <button class="btn btn-danger-solid btn-sm" onclick="deleteSelected('${section}')">Eliminar seleccionados</button>
     <button class="btn btn-sm" onclick="clearSelection('${section}')">Cancelar</button>
   </div>`;
@@ -1293,15 +1277,32 @@ function openAddExp(section){
     ${isTC?`<div class="fg"><label class="flabel">Tipo de gasto</label>
       <select id="exp-tipo" onchange="onTipoGastoChange()">
         <option value="cuota">Cuota</option>
-        <option value="fijo">Gasto fijo (se repite todos los meses)</option>
+        <option value="fijo">Gasto fijo (mensual recurrente)</option>
       </select>
     </div>
-    <div id="exp-cuota-row" class="frow">
-      <div class="fg"><label class="flabel">Cuota (ej: 2/6)</label><input type="text" id="exp-q" placeholder="1/1"></div>
-      <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp" placeholder="Gonza, Gladys…"></div>
+    <div id="exp-cuota-row">
+      <div class="frow" style="margin-top:8px">
+        <div class="fg"><label class="flabel">Cantidad de cuotas</label>
+          <select id="exp-ncuotas">
+            <option value="1">1 cuota (pago único)</option>
+            <option value="2">2 cuotas</option>
+            <option value="3">3 cuotas</option>
+            <option value="4">4 cuotas</option>
+            <option value="5">5 cuotas</option>
+            <option value="6">6 cuotas</option>
+            <option value="7">7 cuotas</option>
+            <option value="8">8 cuotas</option>
+            <option value="9">9 cuotas</option>
+            <option value="10">10 cuotas</option>
+            <option value="11">11 cuotas</option>
+            <option value="12">12 cuotas</option>
+          </select>
+        </div>
+        <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp" placeholder="Gonza, Gladys…"></div>
+      </div>
     </div>
     <div id="exp-fijo-row" style="display:none">
-      <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp-fijo" placeholder="Gonza, Gladys…"></div>
+      <div class="fg" style="margin-top:8px"><label class="flabel">Compartido con</label><input type="text" id="exp-comp-fijo" placeholder="Gonza, Gladys…"></div>
     </div>`:''}
     <div class="fg"><label class="flabel">Monto ($)</label><input type="number" id="exp-v" placeholder="0"></div>
     ${isTC?`<div class="notice" style="margin-top:0;font-size:12px">ℹ️ La app propagará cuotas siguientes a meses existentes.</div>`:''}
@@ -1321,15 +1322,21 @@ function openEditExp(section,idx){
     ${isTC?`<div class="fg"><label class="flabel">Tipo de gasto</label>
       <select id="exp-tipo" onchange="onTipoGastoChange()">
         <option value="cuota" ${(it.tipo||'cuota')==='cuota'?'selected':''}>Cuota</option>
-        <option value="fijo" ${it.tipo==='fijo'?'selected':''}>Gasto fijo</option>
+        <option value="fijo" ${it.tipo==='fijo'?'selected':''}>Gasto fijo (mensual recurrente)</option>
       </select>
     </div>
-    <div id="exp-cuota-row" class="frow" style="${it.tipo==='fijo'?'display:none':''}">
-      <div class="fg"><label class="flabel">Cuota</label><input type="text" id="exp-q" value="${it.q||'1/1'}"></div>
-      <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp" value="${it.comp||''}"></div>
+    <div id="exp-cuota-row" style="${it.tipo==='fijo'?'display:none':''}">
+      <div class="frow" style="margin-top:8px">
+        <div class="fg"><label class="flabel">Número de cuotas</label>
+          <select id="exp-ncuotas">
+            ${[1,2,3,4,5,6,7,8,9,10,11,12].map(n=>`<option value="${n}" ${(it.totalCuotas||1)===n?'selected':''}>${n} cuota${n>1?"s":""}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp" value="${it.comp||''}"></div>
+      </div>
     </div>
     <div id="exp-fijo-row" style="${it.tipo==='fijo'?'':'display:none'}">
-      <div class="fg"><label class="flabel">Compartido con</label><input type="text" id="exp-comp-fijo" value="${it.tipo==='fijo'?(it.comp||''):''}"></div>
+      <div class="fg" style="margin-top:8px"><label class="flabel">Compartido con</label><input type="text" id="exp-comp-fijo" value="${it.tipo==='fijo'?(it.comp||''):''}"></div>
     </div>`:''}
     <div class="fg"><label class="flabel">Monto ($)</label><input type="number" id="exp-v" value="${it.v}"></div>
     <div id="exp-err" class="err-msg" style="display:none"></div>
@@ -1349,7 +1356,6 @@ function renderExpList(){
       <button class="icon-btn up" onclick="moveItem('${expSection}',${i},-1)">↑</button>
       <button class="icon-btn dn" onclick="moveItem('${expSection}',${i},1)">↓</button>
       <button class="icon-btn edit" onclick="openEditExp('${expSection}',${i})">✏️</button>
-      <button class="icon-btn del" onclick="askDelete('${expSection}',${i},'${it.c}')">🗑️</button>
     </div>`).join('');
 }
 
@@ -1369,7 +1375,9 @@ function saveExp(){
       item.q='';
       item.comp=(document.getElementById('exp-comp-fijo')?.value||'').trim();
     } else {
-      item.q=document.getElementById('exp-q').value.trim()||'1/1';
+      const n=parseInt(document.getElementById('exp-ncuotas')?.value||'1');
+      item.totalCuotas=n;
+      item.q=`1/${n}`;  // always starts at 1 when creating new
       item.comp=(document.getElementById('exp-comp')?.value||'').trim();
     }
   }
@@ -1381,10 +1389,7 @@ function saveExp(){
     if(isTC){
       propagateAfterSave(item, expSection, curIdx);
       if(item.tipo==='fijo') toast('✓ Gasto fijo añadido a todos los meses siguientes');
-      else {
-        const qp=parseQuota(item.q);
-        if(qp&&qp.cur<qp.total) toast(`✓ ${item.q} — cuotas propagadas a meses siguientes`);
-      }
+      else if(item.totalCuotas>1) toast(`✓ Cuota 1/${item.totalCuotas} — cuotas 2 a ${item.totalCuotas} propagadas`);
     }
     if(document.getElementById('exp-c'))document.getElementById('exp-c').value='';
     if(document.getElementById('exp-v'))document.getElementById('exp-v').value='';
@@ -1441,43 +1446,41 @@ function moveItem(section,idx,dir){
 // ════════════════════════════
 // MULTI-SELECT DELETE
 // ════════════════════════════
-const selectedItems = {}; // { 'section': Set of indices }
+const selectedItems = {}; // key: `${monthIdx}_${section}` → Set of row indices
+
+function selKey(section){ return `${curIdx}_${section}`; }
 
 function toggleSelectItem(section, idx, checked){
-  if(!selectedItems[section]) selectedItems[section] = new Set();
-  if(checked) selectedItems[section].add(idx);
-  else selectedItems[section].delete(idx);
-  updateDelBar(section);
-}
-
-function updateDelBar(section){
+  const k = selKey(section);
+  if(!selectedItems[k]) selectedItems[k] = new Set();
+  if(checked) selectedItems[k].add(idx);
+  else selectedItems[k].delete(idx);
+  // update bar UI without full re-render
   const bar = document.getElementById('del-bar-'+section);
-  const set = selectedItems[section];
+  const set = selectedItems[k];
   if(!bar) return;
   if(set && set.size > 0){
     bar.classList.add('show');
-    bar.querySelector('.del-count').textContent = set.size + (set.size===1?' concepto':' conceptos');
+    const cnt = bar.querySelector('.del-count');
+    if(cnt) cnt.textContent = set.size + (set.size===1?' concepto':' conceptos');
   } else {
     bar.classList.remove('show');
   }
 }
 
 function deleteSelected(section){
-  const set = selectedItems[section];
+  const k = selKey(section);
+  const set = selectedItems[k];
   if(!set || set.size === 0) return;
-  const indices = Array.from(set).sort((a,b) => b-a); // delete from end to preserve indices
-  indices.forEach(i => months[curIdx][section].splice(i,1));
-  delete selectedItems[section];
-  save();
-  renderActive();
-  checkAlert();
+  Array.from(set).sort((a,b)=>b-a).forEach(i => months[curIdx][section].splice(i,1));
+  delete selectedItems[k];
+  save(); renderActive(); checkAlert();
   const accMap={casa:'r-casa',personal:'r-pers',naranja:'tc-nar',galAdi:'tc-gadi',galTit:'tc-gtit'};
   const accId = accMap[section];
   if(accId) setTimeout(()=>{
     const b=document.getElementById('acc-'+accId);
     const ch=document.getElementById('chv-'+accId);
-    if(b) b.classList.add('open');
-    if(ch) ch.classList.add('open');
+    if(b)b.classList.add('open');if(ch)ch.classList.add('open');
   },30);
 }
 
