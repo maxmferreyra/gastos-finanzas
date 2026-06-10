@@ -110,6 +110,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 .year-tabs{display:flex;gap:6px;margin-bottom:10px}
 .ytab{padding:5px 14px;font-size:13px;font-weight:600;border:1.5px solid var(--border-md);border-radius:16px;background:var(--surface);color:var(--text2);cursor:pointer;transition:all .15s}
 .ytab:hover{background:var(--accent-light);color:var(--accent);border-color:var(--accent-2)}
+.ytab-add{border-style:dashed;color:var(--text3)!important;background:none!important}
+.ytab-add:hover{border-color:var(--accent)!important;color:var(--accent)!important;background:var(--accent-light)!important}
 .ytab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 
 /* MONTHS */
@@ -215,6 +217,8 @@ input:focus,select:focus{border-color:var(--accent-2)}
 .btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
 .btn-primary:hover{background:#1450a0}
 .btn-danger-solid{background:var(--red);color:#fff;border-color:var(--red)}
+.btn-del-mes{background:none;border:1.5px solid #fca5a5;color:var(--red);border-radius:var(--r-sm);padding:8px 20px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit}
+.btn-del-mes:hover{background:var(--red-light)}
 .btn-danger-solid:hover{background:#a32323}
 .btn-ghost{border-color:transparent;background:none;color:var(--text3)}
 .btn-ghost:hover{background:var(--accent-light);color:var(--accent)}
@@ -719,7 +723,7 @@ function renderYearTabs(){
   const years=getYears();
   document.getElementById('yearTabs').innerHTML=years.map(y=>
     `<button class="ytab${y===activeYear?' active':''}" onclick="selectYear('${y}')">${y}</button>`
-  ).join('');
+  ).join('')+`<button class="ytab ytab-add" onclick="openAddYear()" title="Agregar año">+ Año</button>`;
 }
 function selectYear(y){
   activeYear=y;
@@ -949,6 +953,9 @@ function renderResumen(){
       <div class="row"><span class="row-label">Galicia titular Gonza</span><span class="row-val">${fmt(gtitV)}</span></div>
       <div class="row"><span class="row-label" style="color:var(--text3)">(-) Gastos Gonza</span><span class="row-val" style="color:var(--red)">−${fmt(d.gonzaTC)}</span></div>
       <div class="total-row"><span>Neto tarjetas</span><span>${fmt(tNar(d)+gadiV+gtitV-d.gonzaTC)}</span></div>
+    </div>
+    <div style="text-align:center;padding:8px 0 4px">
+      <button class="btn btn-del-mes" onclick="askDeleteMonth()">🗑️ Eliminar este mes</button>
     </div>`;
   setTimeout(()=>{
     const ctx=document.getElementById('donutChart');if(!ctx)return;
@@ -1215,6 +1222,24 @@ function fetchDolar(){
 // ════════════════════════════
 // ADD MONTH
 // ════════════════════════════
+function openAddYear(){
+  // Find the highest year currently in months list
+  const years = getYears().map(Number).filter(y=>!isNaN(y)).sort((a,b)=>a-b);
+  const lastYear = years.length ? years[years.length-1] : 2026;
+  const nextYear = lastYear + 1;
+  // Show a simple prompt-style modal using the existing ovAddMonth modal
+  document.getElementById('am-mes').value = '';
+  document.getElementById('am-sueldo').value = months[months.length-1]?.sueldo || 0;
+  document.getElementById('am-ingreso').value = '';
+  document.getElementById('am-gonza').value = '0';
+  document.getElementById('am-err').style.display = 'none';
+  document.getElementById('am-hint').textContent = `Se añadirá el año ${nextYear}. Podés agregar el primer mes de ese año.`;
+  // Pre-fill with January of next year
+  const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  document.getElementById('am-mes').value = `Enero ${nextYear}`;
+  openOverlay('ovAddMonth');
+}
+
 function openAddMonth(){
   const last=months[months.length-1].mes;
   const all=[...INITIAL_DATA.map(m=>m.mes),...ALL_MONTHS_LIST];
@@ -1498,6 +1523,30 @@ function onTipoGastoChange(){
     if(cuotaRow)cuotaRow.style.display='';
     if(fijoRow)fijoRow.style.display='none';
   }
+}
+
+// ════════════════════════════
+// DELETE MONTH
+// ════════════════════════════
+function askDeleteMonth(){
+  const mes = months[curIdx].mes;
+  confirmDelete(
+    `¿Eliminar el mes "${mes}" y todos sus datos? Esta acción no se puede deshacer.`,
+    () => {
+      months.splice(curIdx, 1);
+      if(months.length === 0){
+        // Shouldn't happen but safety net
+        months = JSON.parse(JSON.stringify(INITIAL_DATA));
+      }
+      curIdx = Math.min(curIdx, months.length - 1);
+      save();
+      initYears();
+      renderMonthsBar();
+      checkAlert();
+      renderActive();
+      toast('✓ Mes eliminado');
+    }
+  );
 }
 
 // ════════════════════════════
