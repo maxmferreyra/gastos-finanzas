@@ -170,6 +170,10 @@ table.tbl tfoot td{font-weight:700;background:var(--surface2);border-top:1.5px s
 .icon-btn:hover{background:var(--surface2)}
 .icon-btn.edit:hover{color:var(--accent)}
 .icon-btn.del:hover{color:var(--red)}
+.icon-btn.up:hover{color:var(--green)}
+.icon-btn.dn:hover{color:var(--amber)}
+.drag-handle{cursor:grab;color:var(--text3);font-size:14px;padding:4px 3px;user-select:none}
+.drag-handle:active{cursor:grabbing}
 
 /* CHECKBOX */
 .cbx{width:16px;height:16px;cursor:pointer;accent-color:#1c7a5a}
@@ -644,14 +648,54 @@ function propagateQuotas(item,section,fromIdx){
   const qp=parseQuota(item.q);
   if(!qp||qp.cur>=qp.total)return 0;
   let count=0;
-  for(let next=qp.cur+1;next<=qp.total;next++){
-    const ti=fromIdx+(next-qp.cur);
+  // offset: each next quota goes to the next consecutive month
+  for(let offset=1;offset<=(qp.total-qp.cur);offset++){
+    const ti=fromIdx+offset;
     if(ti>=months.length)break;
+    const nextNum=qp.cur+offset;
     const tm=months[ti];
-    const already=tm[section].find(i=>{const tp=parseQuota(i.q);return i.c===item.c&&tp&&tp.total===qp.total&&tp.cur===next;});
-    if(!already){tm[section].push({c:item.c,q:`${next}/${qp.total}`,v:item.v,comp:item.comp||''});count++;}
+    // Remove any existing entry for same concept+total to avoid duplicates
+    const existIdx=tm[section].findIndex(i=>{const tp=parseQuota(i.q);return i.c===item.c&&tp&&tp.total===qp.total;});
+    const newEntry={c:item.c,q:`${nextNum}/${qp.total}`,v:item.v,comp:item.comp||'',tipo:item.tipo||'cuota'};
+    if(existIdx>=0){
+      // Only overwrite if the stored quota number is wrong
+      const stored=parseQuota(tm[section][existIdx].q);
+      if(!stored||stored.cur!==nextNum) tm[section][existIdx]=newEntry;
+    } else {
+      tm[section].push(newEntry);
+      count++;
+    }
   }
   return count;
+}
+
+// When creating a new month, auto-fill quota continuations from previous months
+function fillQuotasForNewMonth(newIdx){
+  const sections=['naranja','galAdi','galTit'];
+  sections.forEach(sec=>{
+    // Look back through all previous months for quota chains not yet in newIdx month
+    for(let prevIdx=0;prevIdx<newIdx;prevIdx++){
+      (months[prevIdx][sec]||[]).forEach(item=>{
+        const qp=parseQuota(item.q);
+        if(!qp||item.tipo==='fijo')return;
+        // Calculate what quota number should be in newIdx
+        const offset=newIdx-prevIdx;
+        const expectedNum=qp.cur+offset;
+        if(expectedNum<1||expectedNum>qp.total)return;
+        // Check if already exists in new month
+        const already=months[newIdx][sec].find(i=>{
+          const tp=parseQuota(i.q);
+          return i.c===item.c&&tp&&tp.total===qp.total&&tp.cur===expectedNum;
+        });
+        if(!already){
+          months[newIdx][sec].push({
+            c:item.c,q:`${expectedNum}/${qp.total}`,
+            v:item.v,comp:item.comp||'',tipo:'cuota'
+          });
+        }
+      });
+    }
+  });
 }
 
 // ════════════════════════════
@@ -752,6 +796,8 @@ function mkSimpleTable(items,section){
       <td style="text-align:right;color:var(--accent);font-weight:600">${fmt(it.v/2)}</td>
       <td style="text-align:center"><input type="checkbox" class="cbx" ${it.paid?'checked':''} onchange="togglePaid('${section}',${i},this.checked)"></td>
       <td style="white-space:nowrap">
+        <button class="icon-btn up" title="Subir" onclick="moveItem('${section}',${i},-1)">↑</button>
+        <button class="icon-btn dn" title="Bajar" onclick="moveItem('${section}',${i},1)">↓</button>
         <button class="icon-btn edit" title="Editar" onclick="openEditExp('${section}',${i})">✏️</button>
         <button class="icon-btn del" title="Eliminar" onclick="askDelete('${section}',${i},'${it.c}')">🗑️</button>
       </td>
@@ -761,6 +807,8 @@ function mkSimpleTable(items,section){
       <td style="text-align:right">${fmt(it.v)}</td>
       <td style="text-align:center"><input type="checkbox" class="cbx" ${it.paid?'checked':''} onchange="togglePaid('${section}',${i},this.checked)"></td>
       <td style="white-space:nowrap">
+        <button class="icon-btn up" title="Subir" onclick="moveItem('${section}',${i},-1)">↑</button>
+        <button class="icon-btn dn" title="Bajar" onclick="moveItem('${section}',${i},1)">↓</button>
         <button class="icon-btn edit" title="Editar" onclick="openEditExp('${section}',${i})">✏️</button>
         <button class="icon-btn del" title="Eliminar" onclick="askDelete('${section}',${i},'${it.c}')">🗑️</button>
       </td>
@@ -785,6 +833,8 @@ function mkTCTable(items,section){
       <td style="text-align:right">${fmt(it.v)}</td>
       <td>${it.comp?`<span class="badge ${badgeCls(it.comp)}">${it.comp}</span>`:''}</td>
       <td style="white-space:nowrap">
+        <button class="icon-btn up" title="Subir" onclick="moveItem('${section}',${i},-1)">↑</button>
+        <button class="icon-btn dn" title="Bajar" onclick="moveItem('${section}',${i},1)">↓</button>
         <button class="icon-btn edit" title="Editar" onclick="openEditExp('${section}',${i})">✏️</button>
         <button class="icon-btn del" title="Eliminar" onclick="askDelete('${section}',${i},'${it.c}')">🗑️</button>
       </td>
@@ -1142,7 +1192,9 @@ function saveNewMonth(){
   if(sue<=0){err.textContent='Ingresá el sueldo.';err.style.display='block';return;}
   if(months.find(m=>m.mes===mes)){err.textContent='Ya existe un mes con ese nombre en ese año.';err.style.display='block';return;}
   months.push({mes,sueldo:sue,ingreso:ing,gonzaTC:gonz,casa:[],personal:[],naranja:[],galAdi:[],galTit:[],extras:[]});
-  save();curIdx=months.length-1;
+  const newIdx=months.length-1;
+  fillQuotasForNewMonth(newIdx);
+  save();curIdx=newIdx;
   closeOverlay('ovAddMonth');
   // Switch to the year of the new month so it becomes visible
   const newYear=mes.split(' ')[1]||activeYear;
@@ -1232,6 +1284,8 @@ function renderExpList(){
       <span class="prev-item-label">${it.c}${it.q?' <span class="text-sm">'+it.q+'</span>':''}</span>
       ${it.comp?`<span class="badge ${badgeCls(it.comp)}" style="margin-right:4px">${it.comp}</span>`:''}
       <span class="prev-item-val">${fmt(it.v)}</span>
+      <button class="icon-btn up" onclick="moveItem('${expSection}',${i},-1)">↑</button>
+      <button class="icon-btn dn" onclick="moveItem('${expSection}',${i},1)">↓</button>
       <button class="icon-btn edit" onclick="openEditExp('${expSection}',${i})">✏️</button>
       <button class="icon-btn del" onclick="askDelete('${expSection}',${i},'${it.c}')">🗑️</button>
     </div>`).join('');
@@ -1282,6 +1336,28 @@ function askDelete(section,idx,name){
     if(document.getElementById('exp-list'))renderExpList();
     renderActive();checkAlert();
   });
+}
+
+// ════════════════════════════
+// MOVE ITEMS UP/DOWN
+// ════════════════════════════
+function moveItem(section,idx,dir){
+  const arr=months[curIdx][section];
+  const newIdx=idx+dir;
+  if(newIdx<0||newIdx>=arr.length)return;
+  const tmp=arr[idx];arr[idx]=arr[newIdx];arr[newIdx]=tmp;
+  save();renderActive();
+  // Re-open accordion after re-render
+  const accMap={casa:'r-casa',personal:'r-pers',naranja:'tc-nar',galAdi:'tc-gadi',galTit:'tc-gtit'};
+  const accId=accMap[section];
+  if(accId){
+    setTimeout(()=>{
+      const b=document.getElementById('acc-'+accId);
+      if(b)b.classList.add('open');
+      const ch=document.getElementById('chv-'+accId);
+      if(ch)ch.classList.add('open');
+    },30);
+  }
 }
 
 // ════════════════════════════
