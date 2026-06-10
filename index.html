@@ -559,14 +559,28 @@ async function loadApp(){
   setSyncStatus('saving','Cargando…');
   try{
     const remote=await sbGet();
-    if(remote&&Array.isArray(remote)&&remote.length>0){months=remote;}
-    else{months=JSON.parse(JSON.stringify(INITIAL_DATA));await sbSave(months);}
-    curIdx=months.length-1;
+    if(remote&&Array.isArray(remote)&&remote.length>0){
+      months=remote;
+    } else {
+      // No data yet: seed with INITIAL_DATA if available, then ensure current year exists
+      months=JSON.parse(JSON.stringify(INITIAL_DATA));
+      seedCurrentYear();
+      await sbSave(months);
+    }
+    // Set curIdx to current month if it exists, else last month
+    const now = new Date();
+    const curMesName = MESES_ES[now.getMonth()] + ' ' + now.getFullYear();
+    const curMesIdx = months.findIndex(m => m.mes === curMesName);
+    curIdx = curMesIdx >= 0 ? curMesIdx : months.length - 1;
     setSyncStatus('ok','Sincronizado ✓');
   }catch(e){
     setSyncStatus('error','Sin conexión — datos locales');
     months=JSON.parse(JSON.stringify(INITIAL_DATA));
-    curIdx=months.length-1;
+    seedCurrentYear();
+    const now = new Date();
+    const curMesName = MESES_ES[now.getMonth()] + ' ' + now.getFullYear();
+    const curMesIdx = months.findIndex(m => m.mes === curMesName);
+    curIdx = curMesIdx >= 0 ? curMesIdx : months.length - 1;
   }
   initYears();
   renderMonthsBar();
@@ -659,6 +673,34 @@ function isLastQuota(q){
   const p=parseQuota(q);
   return p&&p.cur===p.total;
 }
+// ─── YEAR/MONTH HELPERS ─────────────────────────────────────────────────────
+const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                  'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+// Returns the default sueldo to use for new months (last known sueldo or 0)
+function defaultSueldo(){ return months.length ? months[months.length-1].sueldo : 0; }
+
+// Create 12 empty months for a given year, skipping any that already exist
+function createYearMonths(year){
+  let added = 0;
+  MESES_ES.forEach(m => {
+    const name = `${m} ${year}`;
+    if(!months.find(x => x.id ? false : x.mes === name) && !months.find(x => x.mes === name)){
+      const sue = defaultSueldo();
+      months.push({id:uid(), mes:name, sueldo:sue, ingreso:sue, gonzaTC:0,
+        casa:[], personal:[], naranja:[], galAdi:[], galTit:[], extras:[]});
+      added++;
+    }
+  });
+  return added;
+}
+
+// On first load with no remote data: seed the current year's 12 months
+function seedCurrentYear(){
+  const year = new Date().getFullYear();
+  createYearMonths(year);
+}
+
 // ─── QUOTA PROPAGATION ──────────────────────────────────────────────────────
 // Simple: when a new item is saved, push consecutive quotas to following months.
 // item.totalCuotas = total number of installments (e.g. 6)
@@ -736,8 +778,7 @@ const ALL_MONTHS_LIST=['Agosto 2026','Septiembre 2026','Octubre 2026','Noviembre
 function renderMonthsBar(){
   const filtered=months.map((m,i)=>({m,i})).filter(({m})=>m.mes.split(' ')[1]===activeYear);
   document.getElementById('monthsBar').innerHTML=
-    filtered.map(({m,i})=>`<button class="mpill${i===curIdx?' active':''}" onclick="selMonth(${i})">${m.mes.split(' ')[0].substring(0,3)}</button>`).join('')+
-    `<button class="mpill mpill-add" onclick="openAddMonth()">+ Nuevo</button>`;
+    filtered.map(({m,i})=>`<button class="mpill${i===curIdx?' active':''}" onclick="selMonth(${i})">${m.mes.split(' ')[0].substring(0,3)}</button>`).join('');
 }
 function selMonth(i){curIdx=i;renderMonthsBar();checkAlert();renderActive();}
 
@@ -1213,22 +1254,36 @@ function fetchDolar(){
 // ADD MONTH
 // ════════════════════════════
 function openAddYear(){
-  // Find the highest year currently in months list
   const years = getYears().map(Number).filter(y=>!isNaN(y)).sort((a,b)=>a-b);
-  const lastYear = years.length ? years[years.length-1] : 2026;
+  const lastYear = years.length ? years[years.length-1] : new Date().getFullYear();
   const nextYear = lastYear + 1;
-  // Show a simple prompt-style modal using the existing ovAddMonth modal
-  document.getElementById('am-mes').value = '';
-  document.getElementById('am-sueldo').value = months[months.length-1]?.sueldo || 0;
-  document.getElementById('am-ingreso').value = '';
-  document.getElementById('am-gonza').value = '0';
-  document.getElementById('am-err').style.display = 'none';
-  document.getElementById('am-hint').textContent = `Se añadirá el año ${nextYear}. Podés agregar el primer mes de ese año.`;
-  // Pre-fill with January of next year
-  const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-  document.getElementById('am-mes').value = `Enero ${nextYear}`;
-  openOverlay('ovAddMonth');
+  confirmDelete(
+    `¿Crear el año ${nextYear} con los 12 meses (Enero–Diciembre)?`,
+    () => {
+      const added = createYearMonths(nextYear);
+      if(added === 0){
+        toast(`El año ${nextYear} ya existe`);
+        return;
+      }
+      save();
+      // Switch to new year, select January
+      activeYear = String(nextYear);
+      initYears();
+      renderMonthsBar();
+      // Select January of new year
+      const janIdx = months.findIndex(m => m.mes === `Enero ${nextYear}`);
+      if(janIdx >= 0){ curIdx = janIdx; }
+      renderActive();
+      toast(`✓ Año ${nextYear} creado con 12 meses`);
+    }
+  );
+  // Override confirm button text
+  setTimeout(()=>{
+    const btn = document.getElementById('confirmOkBtn');
+    if(btn){ btn.textContent = `Crear ${nextYear}`; btn.style.background='var(--accent)'; btn.style.borderColor='var(--accent)'; }
+  }, 30);
 }
+
 
 function openAddMonth(){
   const last=months[months.length-1].mes;
@@ -1533,11 +1588,16 @@ function askDeleteMonth(){
       ['casa','personal','naranja','galAdi','galTit'].forEach(sec => {
         delete selectedItems[`${curIdx}_${sec}`];
       });
+      const deletedYear = months[curIdx].mes.split(' ')[1];
       months.splice(curIdx, 1);
       if(months.length === 0){
-        months = JSON.parse(JSON.stringify(INITIAL_DATA));
+        // Re-seed current year so app always has months
+        seedCurrentYear();
       }
-      curIdx = Math.min(curIdx, months.length - 1);
+      // Try to stay on same year; fall back to last month
+      const sameYearIdx = months.findIndex(m => m.mes.split(' ')[1] === deletedYear);
+      curIdx = sameYearIdx >= 0 ? sameYearIdx : Math.max(0, months.length - 1);
+      if(sameYearIdx >= 0) activeYear = deletedYear;
       save();
       initYears();
       renderMonthsBar();
