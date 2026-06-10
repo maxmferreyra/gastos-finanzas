@@ -429,6 +429,11 @@ let pendingDeleteFn = null;
 const fmt = v => '$' + Math.round(v).toLocaleString('es-AR');
 const fmtUSD = v => 'USD ' + Math.round(v).toLocaleString('es-AR');
 
+// Unique ID generator
+function uid(){
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
+}
+
 // ════════════════════════════
 // INITIAL DATA
 // ════════════════════════════
@@ -661,10 +666,10 @@ function isLastQuota(q){
 // Called once, right after pushing item to months[fromIdx][section].
 function propagateAfterSave(item, section, fromIdx){
   if(item.tipo === 'fijo'){
-    // Copy fixed expense to all subsequent existing months
+    // Copy fixed expense to all subsequent existing months (with unique id each)
     for(let ti = fromIdx + 1; ti < months.length; ti++){
       const already = months[ti][section].some(i => i.c === item.c && i.tipo === 'fijo');
-      if(!already) months[ti][section].push({c:item.c, q:'', v:item.v, comp:item.comp||'', tipo:'fijo'});
+      if(!already) months[ti][section].push({id:uid(), c:item.c, q:'', v:item.v, comp:item.comp||'', tipo:'fijo'});
     }
     return;
   }
@@ -672,34 +677,19 @@ function propagateAfterSave(item, section, fromIdx){
   const total = item.totalCuotas || 1;
   if(total <= 1) return;
   for(let n = 2; n <= total; n++){
-    const ti = fromIdx + (n - 1); // month index for quota n
+    const ti = fromIdx + (n - 1);
     if(ti >= months.length) break;
-    months[ti][section].push({c:item.c, q:`${n}/${total}`, v:item.v, comp:item.comp||'', tipo:'cuota', totalCuotas:total});
+    months[ti][section].push({id:uid(), c:item.c, q:`${n}/${total}`, v:item.v, comp:item.comp||'', tipo:'cuota', totalCuotas:total});
   }
 }
 
 // When a new month is created: carry forward from immediately prior month only
+// fillQuotasForNewMonth is intentionally NOT called on manual month creation.
+// It is only used internally by propagateAfterSave for quota chaining.
+// This ensures manually created months are always empty.
 function fillQuotasForNewMonth(newIdx){
-  if(newIdx < 1) return;
-  const prev = newIdx - 1;
-  const sections = ['naranja','galAdi','galTit'];
-  sections.forEach(sec => {
-    (months[prev][sec] || []).forEach(item => {
-      if(item.tipo === 'fijo'){
-        const exists = months[newIdx][sec].some(i => i.c === item.c && i.tipo === 'fijo');
-        if(!exists) months[newIdx][sec].push({c:item.c, q:'', v:item.v, comp:item.comp||'', tipo:'fijo'});
-        return;
-      }
-      const qp = parseQuota(item.q);
-      if(!qp || qp.cur >= qp.total) return;
-      const nextNum = qp.cur + 1;
-      const exists = months[newIdx][sec].some(i => {
-        const tp = parseQuota(i.q);
-        return i.c === item.c && tp && tp.total === qp.total && tp.cur === nextNum;
-      });
-      if(!exists) months[newIdx][sec].push({c:item.c, q:`${nextNum}/${qp.total}`, v:item.v, comp:item.comp||'', tipo:'cuota', totalCuotas:qp.total});
-    });
-  });
+  // No-op: manual month creation always produces empty months.
+  // Quota propagation is handled by propagateAfterSave at item-save time.
 }
 
 
@@ -1261,11 +1251,16 @@ function saveNewMonth(){
   const err=document.getElementById('am-err');
   if(!mes){err.textContent='Ingresá el nombre del mes.';err.style.display='block';return;}
   if(sue<=0){err.textContent='Ingresá el sueldo.';err.style.display='block';return;}
-  if(months.find(m=>m.mes===mes)){err.textContent='Ya existe un mes con ese nombre en ese año.';err.style.display='block';return;}
-  months.push({mes,sueldo:sue,ingreso:ing,gonzaTC:gonz,casa:[],personal:[],naranja:[],galAdi:[],galTit:[],extras:[]});
-  const newIdx=months.length-1;
-  fillQuotasForNewMonth(newIdx);
-  save();curIdx=newIdx;
+  // Each month is unique by its full name (e.g. "Agosto 2026" vs "Agosto 2027" are different)
+  if(months.find(m=>m.mes===mes)){err.textContent=`Ya existe "${mes}". Cada mes es único por nombre completo.`;err.style.display='block';return;}
+  // Each month gets a unique ID so it's always independent in Supabase
+  const monthId = uid();
+  months.push({id:monthId, mes, sueldo:sue, ingreso:ing, gonzaTC:gonz,
+    casa:[], personal:[], naranja:[], galAdi:[], galTit:[], extras:[]});
+  const newIdx = months.length - 1;
+  // NOTE: we do NOT call fillQuotasForNewMonth here.
+  // New months are always created empty. The user fills them manually.
+  save(); curIdx = newIdx;
   closeOverlay('ovAddMonth');
   // Switch to the year of the new month so it becomes visible
   const newYear=mes.split(' ')[1]||activeYear;
@@ -1410,7 +1405,8 @@ function saveExp(){
     months[curIdx][expSection][editIdx]=item;
     closeOverlay('ovAddExp');
   } else {
-    months[curIdx][expSection].push(item);
+    if(!item.id) item.id = uid();
+  months[curIdx][expSection].push(item);
     if(isTC){
       propagateAfterSave(item, expSection, curIdx);
       if(item.tipo==='fijo') toast('✓ Gasto fijo añadido a todos los meses siguientes');
@@ -1533,9 +1529,12 @@ function askDeleteMonth(){
   confirmDelete(
     `¿Eliminar el mes "${mes}" y todos sus datos? Esta acción no se puede deshacer.`,
     () => {
+      // Clear any selections for this month
+      ['casa','personal','naranja','galAdi','galTit'].forEach(sec => {
+        delete selectedItems[`${curIdx}_${sec}`];
+      });
       months.splice(curIdx, 1);
       if(months.length === 0){
-        // Shouldn't happen but safety net
         months = JSON.parse(JSON.stringify(INITIAL_DATA));
       }
       curIdx = Math.min(curIdx, months.length - 1);
