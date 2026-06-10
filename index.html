@@ -159,7 +159,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 table.tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:320px}
 table.tbl th{text-align:left;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;padding:9px 14px;border-bottom:1px solid var(--border-md);background:var(--surface2)}
-table.tbl td{padding:8px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+table.tbl td{padding:8px 14px;border-bottom:1px solid var(--border);vertical-align:middle;transition:background 0.3s ease}
 table.tbl tr:last-child td{border-bottom:none}
 table.tbl tr:hover td{background:#f5f8ff}
 table.tbl tfoot td{font-weight:700;background:var(--surface2);border-top:1.5px solid var(--border-md)!important}
@@ -180,6 +180,7 @@ table.tbl tfoot td{font-weight:700;background:var(--surface2);border-top:1.5px s
 
 /* LAST QUOTA BADGE */
 .last-quota{background:#d6f5eb;color:#1c7a5a;font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;white-space:nowrap}
+.pago-badge{background:#d6f5eb;color:#1c7a5a;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:6px;white-space:nowrap;display:inline-block}
 
 /* ROWS */
 .row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px}
@@ -644,59 +645,53 @@ function isLastQuota(q){
   const p=parseQuota(q);
   return p&&p.cur===p.total;
 }
-function propagateQuotas(item,section,fromIdx){
-  const qp=parseQuota(item.q);
-  if(!qp||qp.cur>=qp.total)return 0;
-  let count=0;
-  // offset: each next quota goes to the next consecutive month
-  for(let offset=1;offset<=(qp.total-qp.cur);offset++){
-    const ti=fromIdx+offset;
-    if(ti>=months.length)break;
-    const nextNum=qp.cur+offset;
-    const tm=months[ti];
-    // Remove any existing entry for same concept+total to avoid duplicates
-    const existIdx=tm[section].findIndex(i=>{const tp=parseQuota(i.q);return i.c===item.c&&tp&&tp.total===qp.total;});
-    const newEntry={c:item.c,q:`${nextNum}/${qp.total}`,v:item.v,comp:item.comp||'',tipo:item.tipo||'cuota'};
-    if(existIdx>=0){
-      // Only overwrite if the stored quota number is wrong
-      const stored=parseQuota(tm[section][existIdx].q);
-      if(!stored||stored.cur!==nextNum) tm[section][existIdx]=newEntry;
+function propagateQuotas(item, section, fromIdx){
+  const qp = parseQuota(item.q);
+  if(!qp || qp.cur >= qp.total) return 0;
+  let count = 0;
+  for(let offset = 1; offset <= (qp.total - qp.cur); offset++){
+    const ti = fromIdx + offset;
+    if(ti >= months.length) break;
+    const nextNum = qp.cur + offset;
+    const entry = {c:item.c, q:`${nextNum}/${qp.total}`, v:item.v, comp:item.comp||'', tipo:'cuota'};
+    const arr = months[ti][section];
+    const existIdx = arr.findIndex(i => {
+      const tp = parseQuota(i.q);
+      return i.c === item.c && tp && tp.total === qp.total;
+    });
+    if(existIdx >= 0){
+      arr[existIdx] = entry;
     } else {
-      tm[section].push(newEntry);
+      arr.push(entry);
       count++;
     }
   }
   return count;
 }
 
-// When creating a new month, auto-fill quota continuations from previous months
+// When a new month is created, carry forward quota continuations from previous month only
 function fillQuotasForNewMonth(newIdx){
-  const sections=['naranja','galAdi','galTit'];
-  sections.forEach(sec=>{
-    // Look back through all previous months for quota chains not yet in newIdx month
-    for(let prevIdx=0;prevIdx<newIdx;prevIdx++){
-      (months[prevIdx][sec]||[]).forEach(item=>{
-        const qp=parseQuota(item.q);
-        if(!qp||item.tipo==='fijo')return;
-        // Calculate what quota number should be in newIdx
-        const offset=newIdx-prevIdx;
-        const expectedNum=qp.cur+offset;
-        if(expectedNum<1||expectedNum>qp.total)return;
-        // Check if already exists in new month
-        const already=months[newIdx][sec].find(i=>{
-          const tp=parseQuota(i.q);
-          return i.c===item.c&&tp&&tp.total===qp.total&&tp.cur===expectedNum;
-        });
-        if(!already){
-          months[newIdx][sec].push({
-            c:item.c,q:`${expectedNum}/${qp.total}`,
-            v:item.v,comp:item.comp||'',tipo:'cuota'
-          });
-        }
+  if(newIdx === 0) return;
+  const prevIdx = newIdx - 1;
+  const sections = ['naranja','galAdi','galTit'];
+  sections.forEach(sec => {
+    (months[prevIdx][sec] || []).forEach(item => {
+      const qp = parseQuota(item.q);
+      if(!qp || (item.tipo && item.tipo === 'fijo')) return;
+      if(qp.cur >= qp.total) return;
+      const nextNum = qp.cur + 1;
+      const arr = months[newIdx][sec];
+      const already = arr.find(i => {
+        const tp = parseQuota(i.q);
+        return i.c === item.c && tp && tp.total === qp.total && tp.cur === nextNum;
       });
-    }
+      if(!already){
+        arr.push({c:item.c, q:`${nextNum}/${qp.total}`, v:item.v, comp:item.comp||'', tipo:'cuota'});
+      }
+    });
   });
 }
+
 
 // ════════════════════════════
 // YEAR SELECTOR
@@ -825,26 +820,34 @@ function mkTCTable(items,section){
   const tot=sumArr(items);
   const secKey=section+'_paid';
   const isPaid=months[curIdx][secKey]||false;
-  return `<div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Concepto</th><th>Tipo / Cuota</th><th style="text-align:right">Monto</th><th>Compartido</th><th></th></tr></thead>
-    <tbody>${items.map((it,i)=>`<tr>
-      <td>${it.c}${it.tipo!=='fijo'?lastQuotaBadge(it.q):''}</td>
-      <td style="color:var(--text3)">${it.tipo==='fijo'?'<span class="badge b-shared">Fijo</span>':it.q||'-'}</td>
+  const paidBadge=isPaid?'<span class="pago-badge">✓ ¡Pago!</span>':'';
+  const rows=items.map((it,i)=>{
+    const lastQ=it.tipo!=='fijo'?lastQuotaBadge(it.q):'';
+    const typeCell=it.tipo==='fijo'?'<span class="badge b-shared">Fijo</span>':(it.q||'-');
+    const comp=it.comp?`<span class="badge ${badgeCls(it.comp)}">${it.comp}</span>`:'';
+    return `<tr>
+      <td>${it.c}${lastQ}</td>
+      <td style="color:var(--text3)">${typeCell}</td>
       <td style="text-align:right">${fmt(it.v)}</td>
-      <td>${it.comp?`<span class="badge ${badgeCls(it.comp)}">${it.comp}</span>`:''}</td>
+      <td>${comp}</td>
       <td style="white-space:nowrap">
         <button class="icon-btn up" title="Subir" onclick="moveItem('${section}',${i},-1)">↑</button>
         <button class="icon-btn dn" title="Bajar" onclick="moveItem('${section}',${i},1)">↓</button>
         <button class="icon-btn edit" title="Editar" onclick="openEditExp('${section}',${i})">✏️</button>
         <button class="icon-btn del" title="Eliminar" onclick="askDelete('${section}',${i},'${it.c}')">🗑️</button>
       </td>
-    </tr>`).join('')}</tbody>
-    <tfoot><tr>
-      <td colspan="2" style="display:flex;align-items:center;gap:8px;border-bottom:none">Total ${isPaid?'<span style="background:#d6f5eb;color:#1c7a5a;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap">✓ ¡Pago!</span>':''}</td>
-      <td style="text-align:right">${fmt(tot)}</td>
-      <td></td>
-      <td style="text-align:center"><input type="checkbox" class="cbx" title="Tarjeta pagada" ${isPaid?'checked':''} onchange="toggleTCPaid('${section}',this.checked)"></td>
-    </tr></tfoot>
+    </tr>`;
+  }).join('');
+  const checkedAttr=isPaid?'checked':'';
+  const tfoot=`<tfoot><tr>
+    <td colspan="2">Total ${paidBadge}</td>
+    <td style="text-align:right">${fmt(tot)}</td>
+    <td></td>
+    <td style="text-align:center"><input type="checkbox" class="cbx" title="Tarjeta pagada" ${checkedAttr} onchange="toggleTCPaid('${section}',this.checked)"></td>
+  </tr></tfoot>`;
+  return `<div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Concepto</th><th>Tipo / Cuota</th><th style="text-align:right">Monto</th><th>Compartido</th><th></th></tr></thead>
+    <tbody>${rows}</tbody>${tfoot}
   </table></div>`;
 }
 
@@ -855,6 +858,16 @@ function togglePaid(section,i,val){
 function toggleTCPaid(section,val){
   months[curIdx][section+'_paid']=val;
   save();
+  // Re-render and keep accordion open
+  renderTarjetas();
+  const accMap={naranja:'tc-nar',galAdi:'tc-gadi',galTit:'tc-gtit'};
+  const accId=accMap[section];
+  setTimeout(()=>{
+    const b=document.getElementById('acc-'+accId);
+    if(b)b.classList.add('open');
+    const ch=document.getElementById('chv-'+accId);
+    if(ch)ch.classList.add('open');
+  },30);
 }
 
 function btnAdd(section,label){
@@ -1347,7 +1360,6 @@ function moveItem(section,idx,dir){
   if(newIdx<0||newIdx>=arr.length)return;
   const tmp=arr[idx];arr[idx]=arr[newIdx];arr[newIdx]=tmp;
   save();renderActive();
-  // Re-open accordion after re-render
   const accMap={casa:'r-casa',personal:'r-pers',naranja:'tc-nar',galAdi:'tc-gadi',galTit:'tc-gtit'};
   const accId=accMap[section];
   if(accId){
@@ -1356,7 +1368,20 @@ function moveItem(section,idx,dir){
       if(b)b.classList.add('open');
       const ch=document.getElementById('chv-'+accId);
       if(ch)ch.classList.add('open');
-    },30);
+      // Smooth highlight on moved row
+      const tbody=b&&b.querySelector('tbody');
+      if(tbody){
+        const target=tbody.querySelectorAll('tr')[newIdx];
+        if(target){
+          target.style.background='rgba(53,132,228,0.15)';
+          setTimeout(()=>{
+            target.style.transition='background 0.8s ease';
+            target.style.background='';
+            setTimeout(()=>{ target.style.transition=''; },900);
+          },50);
+        }
+      }
+    },40);
   }
 }
 
